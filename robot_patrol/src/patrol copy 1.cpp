@@ -139,8 +139,8 @@ private:
   void
   laser_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr &scan_msg) {
     // 1) Move forward until an obstacle is closer than threshold at the front
-    //    Use a small ±90° window to judge "front".
-    const float front_min = min_front_distance(*scan_msg, 90.0 * M_PI / 180.0);
+    //    Use a small ±10° window to judge "front".
+    const float front_min = min_front_distance(*scan_msg, 10.0 * M_PI / 180.0);
 
     if (front_min < obstacle_threshold_m_) {
       // 2) Obstacle detected: pick safest direction within front 180°, ignoring
