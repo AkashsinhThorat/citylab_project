@@ -45,6 +45,9 @@ ament_target_dependencies(service_server_node rclcpp std_msgs geometry_msgs nav_
 add_executable(test_service_node src/test_service.cpp)
 ament_target_dependencies(test_service_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
 
+add_executable(patrol_with_service_node src/patrol_with_service.cpp)
+ament_target_dependencies(patrol_with_service_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
+
 # Ensure the node links the generated typesupport when it uses the service types
 # 1) Ask rosidl for the correct typesupport target name for this package/back-end
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
@@ -53,11 +56,13 @@ rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typ
 target_link_libraries(patrol_node ${cpp_typesupport_target})
 target_link_libraries(service_server_node ${cpp_typesupport_target})
 target_link_libraries(test_service_node ${cpp_typesupport_target})
+target_link_libraries(patrol_with_service_node ${cpp_typesupport_target})
 
 install(TARGETS
    patrol_node
    service_server_node
    test_service_node
+   patrol_with_service_node
    DESTINATION lib/${PROJECT_NAME}
  )
 
