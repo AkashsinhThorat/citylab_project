@@ -140,7 +140,7 @@ private:
   laser_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr &scan_msg) {
     // 1) Move forward until an obstacle is closer than threshold at the front
 
-    //    Use a small ±30° window to judge "front".
+    //    Use a small ±20° window to judge "front".
     const float front_min = min_front_distance(*scan_msg, 30.0 * M_PI / 180.0);
 
     if (front_min < obstacle_threshold_m_) {
