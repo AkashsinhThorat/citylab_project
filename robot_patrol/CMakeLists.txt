@@ -12,6 +12,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
@@ -29,7 +30,8 @@ endif()
 # Generate code for your .srv and declare its message deps
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetDirection.srv"
-  DEPENDENCIES sensor_msgs         # <-- REQUIRED because you use LaserScan
+  "action/GoToPose.action"
+  DEPENDENCIES sensor_msgs geometry_msgs     # <-- REQUIRED because you use LaserScan in GetDirection.srv and Pose2D in GoToPose.action
 )
 
 # Make the generated interfaces available to dependents
