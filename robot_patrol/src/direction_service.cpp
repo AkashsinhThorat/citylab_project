@@ -16,6 +16,7 @@ public:
     srv_ = this->create_service<GetDirection>(
         "/direction_service",
         std::bind(&DirectionService::direction_callback, this, _1, _2));
+    RCLCPP_INFO(this->get_logger(), "Direction Service Ready ...");
   }
 
 private:
@@ -65,7 +66,7 @@ private:
   direction_callback(const std::shared_ptr<GetDirection::Request> request,
                      const std::shared_ptr<GetDirection::Response> response) {
 
-    // RCLCPP_INFO(this->get_logger(), "Direction Service Called!");
+    RCLCPP_INFO(this->get_logger(), "Direction Service Requested!");
 
     const auto &laser_data = request->laser_data;
 
@@ -96,6 +97,9 @@ private:
     } else {
       response->direction = "Turn right";
     }
+
+    // Service Complted
+    RCLCPP_INFO(this->get_logger(), "Direction Service Completed!");
   }
 };
 

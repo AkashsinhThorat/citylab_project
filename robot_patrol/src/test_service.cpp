@@ -17,6 +17,7 @@ public:
 
     // Create the service client (non-blocking; may not be ready yet)
     client_ = this->create_client<GetDirection>(service_name_);
+    RCLCPP_INFO(this->get_logger(), "Service Client Ready ...");
 
     // Subscriber for /scan with sensor-friendly QoS
     auto qos = rclcpp::SensorDataQoS().keep_last(1);
@@ -30,7 +31,8 @@ private:
   void laser_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr msg) {
     // Don’t send if the service isn’t up yet
     if (!client_->service_is_ready()) {
-      RCLCPP_INFO(this->get_logger(), "Service not ready yet...");
+      RCLCPP_INFO(this->get_logger(),
+                  "Service not ready yet (Server might not be available) ...");
       return;
     }
 
@@ -47,6 +49,7 @@ private:
     in_flight_.store(true);
 
     // Send async request; response will arrive in response_callback()
+    RCLCPP_INFO(this->get_logger(), "Service Request");
     client_->async_send_request(request,
                                 std::bind(&TestService::response_callback, this,
                                           std::placeholders::_1));
@@ -56,7 +59,7 @@ private:
   void response_callback(rclcpp::Client<GetDirection>::SharedFuture future) {
     // future.get() is safe here (already ready in this callback)
     auto response = future.get();
-    RCLCPP_INFO(this->get_logger(), "Response: %s",
+    RCLCPP_INFO(this->get_logger(), " Service Response: %s",
                 response->direction.c_str());
 
     // Allow the next request
