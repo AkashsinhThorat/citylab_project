@@ -26,6 +26,7 @@ public:
         this, "/go_to_pose", std::bind(&GoToPose::handle_goal, this, _1, _2),
         std::bind(&GoToPose::handle_cancel, this, _1),
         std::bind(&GoToPose::handle_accepted, this, _1));
+    RCLCPP_INFO(this->get_logger(), "Action Server Ready!!");
 
     // Declare the SubscriptionOptions and Initialize the subscriber
     odom_callback_group_ = this->create_callback_group(
@@ -62,6 +63,7 @@ private:
     float x = goal->goal_pos.x;
     float y = goal->goal_pos.y;
     float theta = deg2rad(goal->goal_pos.theta);
+    RCLCPP_INFO(this->get_logger(), "Action Called \n");
     RCLCPP_INFO(this->get_logger(),
                 "Received goal request with desired goal pose x=%.3f , y=%.3f "
                 ",theta=%.3f",
@@ -69,7 +71,7 @@ private:
 
     desired_pos_.x = x;
     desired_pos_.y = y;
-    desired_pos_.theta = theta; // is now in radians
+    desired_pos_.theta = theta;
     (void)uuid;
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
@@ -227,6 +229,7 @@ private:
     RCLCPP_INFO(this->get_logger(),
                 "Goal succeeded. Final pose x=%.3f y=%.3f th=%.3f(rad)",
                 final_pose.x, final_pose.y, final_pose.theta);
+    RCLCPP_INFO(this->get_logger(), "Action Completed !!");
   }
 
   void odom_callback(const std::shared_ptr<nav_msgs::msg::Odometry> odom_msg) {
