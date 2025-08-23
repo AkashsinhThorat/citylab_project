@@ -89,156 +89,143 @@ private:
     std::thread{std::bind(&GoToPose::execute, this, _1), goal_handle}.detach();
   }
 
-  //   void execute(const std::shared_ptr<GoalHandleGoToPoseActionMsg>
-  //   goal_handle) {
-  //     const auto goal = goal_handle->get_goal();
-
-  //     auto feedback = std::make_shared<GoToPoseActionMsg::Feedback>();
-  //     feedback->current_pos = current_pos_;
-
-  //     auto result = std::make_shared<GoToPoseActionMsg::Result>();
-  //     auto cmd = geometry_msgs::msg::Twist();
-  //     rclcpp::Rate loop_rate(1);
-
-  //     Pose2D diff_delta;
-  //     diff_delta.x = desired_pos_.x - current_pos_.x;
-  //     diff_delta.y = desired_pos_.y - current_pos_.y;
-  //     diff_delta.theta = desired_pos_.theta - current_pos_.theta;
-  //     float err_x = 0.0;
-  //     float err_y = 0.0;
-  //     float err_theta = 0.0;
-  //     while (abs(diff_delta.x) > err_x && abs(diff_delta.y) > err_y &&
-  //            abs(diff_delta.theta) > err_theta) {
-  //       // Check if there is a cancel request
-  //       if (goal_handle->is_canceling()) {
-  //         result->status = false;
-  //         goal_handle->canceled(result);
-  //         RCLCPP_INFO(this->get_logger(), "Goal canceled");
-  //         return;
-  //       }
-
-  //       // Move the bot towards the desired pos
-  //       cmd.linear.x = 0.2;
-  //       cmd.angular.z = diff_delta.theta / 2.0;
-  //       cmd_publisher_->publish(cmd);
-  //       feedback->current_pos = current_pos_;
-  //       goal_handle->publish_feedback(feedback);
-  //       RCLCPP_INFO(this->get_logger(), "Publish feedback");
-  //       loop_rate.sleep();
-  //     }
-
-  //     // Check if goal is done
-  //     if (rclcpp::ok()) {
-  //       result->status = true;
-  //       cmd.linear.x = 0.0;
-  //       cmd.angular.z = 0.0;
-  //       cmd_publisher_->publish(cmd);
-  //       goal_handle->succeed(result);
-  //       RCLCPP_INFO(this->get_logger(), "Goal succeeded");
-  //       RCLCPP_INFO(this->get_logger(),
-  //                   "Final robot pose after goal execution is x=%.3f , y=%.3f
-  //                   "
-  //                   ",theta=%.3f",
-  //                   current_pos_.x, current_pos_.y, current_pos_.theta);
-  //     }
-  //   }
-
   void execute(const std::shared_ptr<GoalHandleGoToPoseActionMsg> goal_handle) {
-    // Fixed control parameters (tune as needed)
-    const double lin_speed = 0.2;     // m/s (fixed per requirement)
-    const double k_ang = 1;           // P gain for heading
-    const double max_ang_speed = 1.0; // rad/s clamp
-    const double dist_tol = 0.1;      // 3 cm stop distance
-    const double yaw_tol = 0.1;       // ~1.7 deg stop heading
+    auto result = std::make_shared<GoToPoseActionMsg::Result>();
+    auto feedback = std::make_shared<GoToPoseActionMsg::Feedback>();
+    geometry_msgs::msg::Twist cmd;
 
-    // Small helpers
+    // Tunable Parmeters
+    const double LIN_SPEED = 0.20;  // m/s
+    const double K_ANG_GOAL = 1.2;  // P gain (face waypoint)
+    const double K_ANG_ALIGN = 1.2; // P gain (final yaw align)
+    const double MAX_W = 1.0;       // rad/s clamp
+    const double DIST_TOL = 0.05;   // 5 cm
+    const double YAW_TOL = 0.05;    // ~2.9°
+
+    auto clamp = [](double v, double lo, double hi) {
+      return std::max(lo, std::min(v, hi));
+    };
     auto wrap_to_pi = [](double a) {
-      // wrap angle to [-pi, pi]
       while (a > M_PI)
         a -= 2.0 * M_PI;
       while (a < -M_PI)
         a += 2.0 * M_PI;
       return a;
     };
-    auto clamp = [](double v, double lo, double hi) {
-      return std::max(lo, std::min(v, hi));
-    };
 
-    auto feedback = std::make_shared<GoToPoseActionMsg::Feedback>();
-    auto result = std::make_shared<GoToPoseActionMsg::Result>();
-    geometry_msgs::msg::Twist cmd;
-    rclcpp::Rate loop_rate(10); // 10 Hz control loop
+    rclcpp::Rate rate(10);                   // 10 Hz control
+    rclcpp::Time last_fb_time = this->now(); // feedback throttle (1 Hz)
 
+    // ------------------------------
+    // Phase 1: drive to (x,y)
+    // ------------------------------
     while (rclcpp::ok()) {
-      // --- 1) Read the latest robot pose (snapshot) ---
       Pose2D cur;
-      // If you added a mutex for thread-safety, lock around this copy:
       {
         std::lock_guard<std::mutex> lk(curr_pos_mtx_);
         cur = current_pos_;
       }
 
-      // --- 2) Compute vector and heading to goal ---
       const double dx = desired_pos_.x - cur.x;
       const double dy = desired_pos_.y - cur.y;
-      const double dist_err = std::hypot(dx, dy); // how far to the goal (m)
-      const double heading_to_goal = std::atan2(dy, dx); // where we should face
-      const double yaw_err =
-          wrap_to_pi(heading_to_goal - cur.theta); // how much to turn
+      const double dist_err = std::hypot(dx, dy);
 
-      // --- 3) Stop condition ---
-      if (dist_err < dist_tol && std::fabs(yaw_err) < yaw_tol) {
+      if (dist_err < DIST_TOL) {
+        cmd.linear.x = 0.0;
+        cmd.angular.z = 0.0;
+        cmd_publisher_->publish(cmd);
         break;
       }
 
-      // --- 4) Handle cancel request ---
+      // Face the waypoint (guard atan2 near zero)
+      const double heading_to_goal =
+          (dist_err > 1e-6) ? std::atan2(dy, dx) : cur.theta;
+      const double yaw_err = wrap_to_pi(heading_to_goal - cur.theta);
+
       if (goal_handle->is_canceling()) {
         cmd.linear.x = 0.0;
         cmd.angular.z = 0.0;
         cmd_publisher_->publish(cmd);
-
         result->status = false;
         goal_handle->canceled(result);
         RCLCPP_INFO(this->get_logger(), "Goal canceled");
         return;
       }
 
-      // --- 5) Control law ---
-      // Turn toward the goal proportional to heading error (P controller).
-      double ang_cmd = clamp(k_ang * yaw_err, -max_ang_speed, max_ang_speed);
-      //   float ang_cmd = yaw_err;
-
-      // Move forward at fixed 0.2 m/s as requested.
-      // (Optional: slow down if the heading error is big)
-      double lin_cmd = lin_speed;
-      if (std::fabs(yaw_err) >
-          0.6) { // ~34 deg: reduce forward drift when badly misaligned
-        lin_cmd *= 0.4;
-      }
+      // Control
+      double ang_cmd = clamp(K_ANG_GOAL * yaw_err, -MAX_W, MAX_W);
+      double lin_cmd = LIN_SPEED;
+      if (std::fabs(yaw_err) > 0.6)
+        lin_cmd *= 0.4; // slow if misaligned
 
       cmd.linear.x = lin_cmd;
       cmd.angular.z = ang_cmd;
       cmd_publisher_->publish(cmd);
 
-      // --- 6) Publish feedback (current pose) ---
-      feedback->current_pos = cur;
-      goal_handle->publish_feedback(feedback);
+      // Feedback @ 1 Hz
+      auto now = this->now();
+      if ((now - last_fb_time).seconds() >= 1.0) {
+        feedback->current_pos = cur; // θ in radians
+        goal_handle->publish_feedback(feedback);
+        last_fb_time = now;
+      }
 
-      loop_rate.sleep();
+      rate.sleep();
     }
 
-    // --- 7) Success: stop the robot and finish ---
+    // ------------------------------
+    // Phase 2: align final yaw
+    // ------------------------------
+    while (rclcpp::ok()) {
+      Pose2D cur;
+      {
+        std::lock_guard<std::mutex> lk(curr_pos_mtx_);
+        cur = current_pos_;
+      }
+
+      const double yaw_err = wrap_to_pi(desired_pos_.theta - cur.theta);
+      if (std::fabs(yaw_err) < YAW_TOL)
+        break;
+
+      if (goal_handle->is_canceling()) {
+        cmd.linear.x = 0.0;
+        cmd.angular.z = 0.0;
+        cmd_publisher_->publish(cmd);
+        result->status = false;
+        goal_handle->canceled(result);
+        RCLCPP_INFO(this->get_logger(), "Goal canceled");
+        return;
+      }
+
+      cmd.linear.x = 0.0;
+      cmd.angular.z = clamp(K_ANG_ALIGN * yaw_err, -MAX_W, MAX_W);
+      cmd_publisher_->publish(cmd);
+
+      // Feedback @ 1 Hz
+      auto now = this->now();
+      if ((now - last_fb_time).seconds() >= 1.0) {
+        feedback->current_pos = cur;
+        goal_handle->publish_feedback(feedback);
+        last_fb_time = now;
+      }
+
+      rate.sleep();
+    }
+
+    // Stop & succeed
     cmd.linear.x = 0.0;
     cmd.angular.z = 0.0;
     cmd_publisher_->publish(cmd);
-
     result->status = true;
     goal_handle->succeed(result);
 
-    // Log final pose
-    Pose2D final_pose = current_pos_;
+    Pose2D final_pose;
+    {
+      std::lock_guard<std::mutex> lk(curr_pos_mtx_);
+      final_pose = current_pos_;
+    }
     RCLCPP_INFO(this->get_logger(),
-                "Goal succeeded. Final pose x=%.3f y=%.3f th=%.3f",
+                "Goal succeeded. Final pose x=%.3f y=%.3f th=%.3f(rad)",
                 final_pose.x, final_pose.y, final_pose.theta);
   }
 
