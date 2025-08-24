@@ -8,10 +8,14 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -25,11 +29,49 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+# Generate code for your .srv and declare its message deps
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/GetDirection.srv"
+  "action/GoToPose.action"
+  DEPENDENCIES sensor_msgs geometry_msgs     # <-- REQUIRED because you use LaserScan in GetDirection.srv and Pose2D in GoToPose.action
+)
+
+# Make the generated interfaces available to dependents
+ament_export_dependencies(rosidl_default_runtime)
+
+# Your node
 add_executable(patrol_node src/patrol.cpp)
 ament_target_dependencies(patrol_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
 
+add_executable(service_server_node src/direction_service.cpp)
+ament_target_dependencies(service_server_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
+
+add_executable(test_service_node src/test_service.cpp)
+ament_target_dependencies(test_service_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
+
+add_executable(patrol_with_service_node src/patrol_with_service.cpp)
+ament_target_dependencies(patrol_with_service_node rclcpp std_msgs geometry_msgs nav_msgs sensor_msgs)
+
+add_executable(action_server_node src/go_to_pose_action.cpp)
+ament_target_dependencies(action_server_node rclcpp rclcpp_action std_msgs geometry_msgs nav_msgs sensor_msgs tf2)
+
+# Ensure the node links the generated typesupport when it uses the service types
+# 1) Ask rosidl for the correct typesupport target name for this package/back-end
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
+# 2) Link your node against that target (and thus depend on it)
+target_link_libraries(patrol_node ${cpp_typesupport_target})
+target_link_libraries(service_server_node ${cpp_typesupport_target})
+target_link_libraries(test_service_node ${cpp_typesupport_target})
+target_link_libraries(patrol_with_service_node ${cpp_typesupport_target})
+target_link_libraries(action_server_node ${cpp_typesupport_target})
+
 install(TARGETS
    patrol_node
+   service_server_node
+   test_service_node
+   patrol_with_service_node
+   action_server_node
    DESTINATION lib/${PROJECT_NAME}
  )
 
