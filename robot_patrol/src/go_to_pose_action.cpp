@@ -22,13 +22,16 @@ class GoToPose : public rclcpp::Node {
 public:
   GoToPose() : Node("action_server_node") {
     using namespace std::placeholders;
+
+    // Initialize the Action server
     this->action_server_ = rclcpp_action::create_server<GoToPoseActionMsg>(
         this, "/go_to_pose", std::bind(&GoToPose::handle_goal, this, _1, _2),
         std::bind(&GoToPose::handle_cancel, this, _1),
         std::bind(&GoToPose::handle_accepted, this, _1));
     RCLCPP_INFO(this->get_logger(), "Action Server Ready!!");
 
-    // Declare the SubscriptionOptions and Initialize the subscriber
+    // Initialize a mutually exclusive clalback group, Declare the
+    // SubscriptionOptions and Initialize the subscriber
     odom_callback_group_ = this->create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
     rclcpp::SubscriptionOptions odom_subscription_options;
@@ -50,10 +53,8 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_publisher_;
 
-  rclcpp::CallbackGroup::SharedPtr timer_callback_group_;
   rclcpp::CallbackGroup::SharedPtr odom_callback_group_;
 
-  rclcpp::TimerBase::SharedPtr timer_;
   std::mutex curr_pos_mtx_;
 
   // ROS callbacks
@@ -102,8 +103,9 @@ private:
     const double K_ANG_ALIGN = 1.2; // P gain (final yaw align)
     const double MAX_W = 1.0;       // rad/s clamp
     const double DIST_TOL = 0.05;   // 5 cm
-    const double YAW_TOL = 0.05;    // ~2.9°
+    const double YAW_TOL = 0.05;    // 0.05 radians
 
+    // Helpful lambdas
     auto clamp = [](double v, double lo, double hi) {
       return std::max(lo, std::min(v, hi));
     };
@@ -115,7 +117,7 @@ private:
       return a;
     };
 
-    rclcpp::Rate rate(10);                   // 10 Hz control
+    rclcpp::Rate rate(10);                   // 10 Hz for control loop
     rclcpp::Time last_fb_time = this->now(); // feedback throttle (1 Hz)
 
     // ------------------------------
@@ -139,7 +141,7 @@ private:
         break;
       }
 
-      // Face the waypoint (guard atan2 near zero)
+      // Face the waypoint (also we must guard atan2 near zero)
       const double heading_to_goal =
           (dist_err > 1e-6) ? std::atan2(dy, dx) : cur.theta;
       const double yaw_err = wrap_to_pi(heading_to_goal - cur.theta);
@@ -158,7 +160,7 @@ private:
       double ang_cmd = clamp(K_ANG_GOAL * yaw_err, -MAX_W, MAX_W);
       double lin_cmd = LIN_SPEED;
       if (std::fabs(yaw_err) > 0.6)
-        lin_cmd *= 0.4; // slow if misaligned
+        lin_cmd *= 0.4; // slowdown if misaligned for more than 0.6 rad
 
       cmd.linear.x = lin_cmd;
       cmd.angular.z = ang_cmd;
@@ -167,7 +169,7 @@ private:
       // Feedback @ 1 Hz
       auto now = this->now();
       if ((now - last_fb_time).seconds() >= 1.0) {
-        feedback->current_pos = cur; // θ in radians
+        feedback->current_pos = cur;
         goal_handle->publish_feedback(feedback);
         last_fb_time = now;
       }
