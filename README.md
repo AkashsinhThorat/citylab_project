@@ -1,6 +1,6 @@
-# robot_patrol: A Reactive Patrol Behavior for TurtleBot3 (ROS 2)
+# robot_patrol: Patrol, Direction Service, and GoToPose Action for TurtleBot3 (ROS 2)
 
-A **ROS 2 (Humble)** C++ package that gives a TurtleBot3 a reactive patrolling behavior. The robot drives continuously around The Construct's city lab, reads its laser scanner, and steers toward the most open direction in front of it so it keeps moving without hitting walls or obstacles.
+A **ROS 2 (Humble)** C++ package that drives a TurtleBot3 around The Construct's city lab, built up across three levels of ROS 2 communication: **topics** (a reactive laser patrol), **services** (a direction service that decides where to turn), and **actions** (a GoToPose server that drives the robot to a requested pose with live feedback).
 
 ![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros&logoColor=white)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
@@ -8,11 +8,13 @@ A **ROS 2 (Humble)** C++ package that gives a TurtleBot3 a reactive patrolling b
 ![Gazebo](https://img.shields.io/badge/Gazebo-Classic_11-FF7300?logo=gazebo&logoColor=white)
 ![Build](https://img.shields.io/badge/build-colcon-blue)
 
-> This is my project for **Checkpoint 5 (Introduction to ROS 2, Part 1)** of The Construct's ROS 2 Basics course. The `main` branch holds the simulation code; a `real-robot` branch holds the variant tuned for the physical TurtleBot3 in the Barcelona lab.
+> This package is my project for **Checkpoint 5 (Intro to ROS 2, Part 1)** and **Checkpoint 6 (Intro to ROS 2, Part 2)** of The Construct's ROS 2 Basics course. The `main` branch holds the simulation code; a `real-robot` branch holds the variant tuned for the physical TurtleBot3 in the Barcelona lab. The demos below are all from the simulation.
 
 ---
 
-## Demo
+## Demos
+
+### Checkpoint 5, Topics: reactive patrol
 
 The TurtleBot3 patrolling the city lab. RViz (left) shows the laser scan and the odometry trail in the `odom` frame while Gazebo (right) shows the robot avoiding the walls and obstacles of the course.
 
@@ -22,43 +24,97 @@ The patrol node's debug stream next to RViz. Each line shows the nearest front o
 
 ![patrol node debug logs and RViz path](assets/cp_5_terminal.gif)
 
-Full resolution videos: [patrol demo](assets/cp_5_patrol_demo.mp4), [terminal](assets/cp_5_terminal.mp4).
+### Checkpoint 6, Task 1: direction service
+
+The service driven patrol. The `service_server_node` (top terminal) logs each request with the summed distance in the left, front, and right sectors and returns a decision, while the `test_service_node` (bottom terminal) prints the response. The robot patrols using those decisions.
+
+![direction service and test client](assets/cp_6_task1_services.gif)
+
+### Checkpoint 6, Task 2: GoToPose action
+
+The GoToPose action server drives the robot to a requested `[x, y, theta]` pose. The terminal streams the current pose as feedback once per second and ends with `Goal finished with status: SUCCEEDED`.
+
+![GoToPose action reaching a goal](assets/cp_6_task2_action.gif)
+
+Full resolution videos: [patrol](assets/cp_5_patrol_demo.mp4), [patrol terminal](assets/cp_5_terminal.mp4), [direction service](assets/cp_6_task1_services.mp4), [GoToPose action](assets/cp_6_task2_action.mp4).
 
 ---
 
 ## Overview
 
-This package is my implementation of the **Introduction to ROS 2 (Part 1)** checkpoint from The Construct's ROS 2 curriculum. The goal is a simple but complete patrol behavior: keep the robot moving around a bounded area indefinitely while avoiding whatever is in its way.
+This package is my implementation of the two **Introduction to ROS 2** checkpoints from The Construct's ROS 2 curriculum. The same robot and the same city lab are used throughout, and each checkpoint swaps in a more capable form of communication:
 
-The behavior is deliberately reactive, with no map and no planner. It works from the laser scan alone:
+**Topics (Checkpoint 5).** A single `Patrol` node reads the laser scan and steers toward the most open ray in the front 180 degrees, driving forward until an obstacle appears within 35 cm. Sensing and actuation are split across a subscriber callback and a 10 Hz timer callback.
 
-- Drive forward at a constant **0.1 m/s**.
-- Watch the **front 180 degrees** of the laser scan.
-- When something in front comes closer than **35 cm**, look across those 180 degrees, find the ray with the **largest finite distance** (ignoring `inf`), and take its angle as the safest heading.
-- That angle, clamped to the range **[-pi/2, +pi/2]** and stored in `direction_`, sets the turn rate: **angular.z = direction_ / 2**.
+**Services (Checkpoint 6, Task 1).** The turn decision is moved out of the patrol node into a `/direction_service`. The service receives a laser scan, splits the front into three 60 degree sectors (right, front, left), sums the distances in each, and returns the direction of the most open sector. A `patrol_with_service` node calls the service and maps the response to a velocity command, and a small `test_service` client exercises the service on its own.
 
-A clear separation between sensing and acting is central to the design. The **subscriber callback** only interprets the laser scan and updates `direction_`. A **separate 10 Hz timer callback** is the only place that publishes to `/cmd_vel`. The two run in their own callback groups under a multi threaded executor, so reading the sensor and commanding the wheels never block each other.
+**Actions (Checkpoint 6, Task 2).** A `GoToPose` action server accepts a target pose `[x, y, theta]`, subscribes to `/odom` for the robot's current pose, and runs a two phase controller to reach the goal: first drive to the `(x, y)` waypoint, then rotate to the final heading. It publishes the current pose as feedback every second and returns a boolean result on success.
+
+All of the custom interfaces (`GetDirection.srv` and `GoToPose.action`) are generated inside the `robot_patrol` package with `rosidl`.
+
+---
+
+## Nodes and interfaces
+
+| Node (executable) | Type | Key interfaces |
+| --- | --- | --- |
+| `patrol_node` | Topics | subscribes `/scan`, publishes `/cmd_vel` |
+| `service_server_node` | Service server | serves `/direction_service` (`GetDirection`) |
+| `test_service_node` | Service client | subscribes `/scan`, calls `/direction_service` |
+| `patrol_with_service_node` | Service client | subscribes `/scan`, calls `/direction_service`, publishes `/cmd_vel` |
+| `action_server_node` | Action server | serves `/go_to_pose` (`GoToPose`), subscribes `/odom`, publishes `/cmd_vel` |
+
+```
+GetDirection.srv                 GoToPose.action
+# Request                        # Goal
+sensor_msgs/LaserScan laser_data geometry_msgs/Pose2D goal_pos
+---                              ---
+# Response                       # Result
+string direction                 bool status
+                                 ---
+                                 # Feedback
+                                 geometry_msgs/Pose2D current_pos
+```
 
 ---
 
 ## How it works
 
+### Direction service
+
 ```mermaid
 flowchart LR
-    Sim["turtlebot3_gazebo (city lab)"] -->|/scan| LC
-    subgraph Node["patrol_node (Patrol class)"]
+    Sim["turtlebot3_gazebo (city lab)"] -->|/scan| PWS
+    subgraph PWS["patrol_with_service_node"]
       direction TB
-      LC["laser_callback()\nfind safest front heading"] -->|sets direction_| ST[("direction_")]
-      ST --> TC["timer_callback() @ 10 Hz\nbuild Twist"]
+      LC["laser_callback()\nobstacle within 35 cm?"]
+      RC["response_callback()\nmap direction to Twist"]
+      TC["timer_callback() @ 10 Hz"]
     end
+    LC -->|GetDirection request| DS["service_server_node\n/direction_service"]
+    DS -->|forward / left / right| RC
+    RC --> TC
     TC -->|/cmd_vel| Sim
 ```
 
-The `laser_callback` measures the minimum finite distance in a narrow window straight ahead to decide whether an obstacle is blocking the path. If it is, `argmax_safest_index` scans the front 180 degree sector for the longest finite ray and converts that index back into an angle from the robot's X axis, clamped to plus or minus 90 degrees. If the path is clear, `direction_` is reset to zero and the robot goes straight.
+The service sums the finite ranges in three 60 degree sectors and returns the most open one (`inf` returns are treated as the sensor's max range). The patrol node only calls the service once an obstacle is within 35 cm of the front, and maps the reply to a fixed command: forward is `linear.x = 0.1, angular.z = 0.0`, left is `angular.z = 0.5`, right is `angular.z = -0.5`. A single in flight flag keeps at most one request open at a time, and the 10 Hz timer is the only publisher to `/cmd_vel`.
 
-The `timer_callback` fires every 100 ms and is the single writer to `/cmd_vel`: `linear.x` is always 0.1 m/s and `angular.z` is `direction_ / 2`. Because the timer is decoupled from the scan rate, the command stream stays at a steady 10 Hz regardless of laser timing.
+### GoToPose action
 
-The launch file also brings up **RViz2** with a saved configuration (fixed frame `odom`, plus RobotModel, TF, LaserScan as spheres, and an Odometry trail) so the whole behavior is visible while it runs.
+```mermaid
+flowchart LR
+    Client["ros2 action send_goal"] -->|GoToPose goal_pos| AS
+    Sim["turtlebot3_gazebo"] -->|/odom| AS
+    subgraph AS["action_server_node (/go_to_pose)"]
+      direction TB
+      P1["Phase 1: drive to (x, y)\nP control on heading"]
+      P2["Phase 2: align final theta"]
+    end
+    AS -->|/cmd_vel| Sim
+    AS -->|feedback: current_pos @ 1 Hz| Client
+```
+
+The odometry callback converts the incoming quaternion to a yaw angle with `tf2`. Phase one drives forward at 0.2 m/s while a proportional controller points the robot at the waypoint (slowing the linear speed when the heading error is large), and stops within a 5 cm tolerance. Phase two rotates in place until the final heading is within about 0.05 rad. The goal executes on its own thread so the executor stays responsive, and cancellation is handled at every step.
 
 ---
 
@@ -69,15 +125,25 @@ citylab_project/
 └── robot_patrol/
     ├── CMakeLists.txt
     ├── package.xml
+    ├── srv/
+    │   └── GetDirection.srv               # service interface (Checkpoint 6)
+    ├── action/
+    │   └── GoToPose.action                # action interface (Checkpoint 6)
     ├── src/
-    │   └── patrol.cpp                     # Patrol node: laser_callback + timer_callback
+    │   ├── patrol.cpp                      # topics patrol (Checkpoint 5)
+    │   ├── direction_service.cpp          # /direction_service server
+    │   ├── test_service.cpp               # service test client
+    │   ├── patrol_with_service.cpp        # patrol driven by the service
+    │   └── go_to_pose_action.cpp          # /go_to_pose action server
     ├── launch/
-    │   └── start_patrolling.launch.py     # starts patrol_node + RViz2
+    │   ├── start_patrolling.launch.py     # patrol_node + RViz
+    │   ├── start_direction_service.launch.py
+    │   ├── start_test_service.launch.py
+    │   ├── main.launch.py                 # direction service + patrol + RViz
+    │   └── start_gotopose_action.launch.py
     └── rviz/
         └── robot_patrol_config.rviz       # odom frame, LaserScan, TF, Odometry trail
 ```
-
-The graded deliverable is `patrol_node`, built from `src/patrol.cpp`.
 
 ---
 
@@ -86,7 +152,8 @@ The graded deliverable is `patrol_node`, built from `src/patrol.cpp`.
 ### Dependencies
 
 - ROS 2 Humble on Ubuntu 22.04
-- `rclcpp`, `sensor_msgs`, `geometry_msgs`, `nav_msgs`, `std_msgs`
+- `rclcpp`, `rclcpp_action`, `sensor_msgs`, `geometry_msgs`, `nav_msgs`, `std_msgs`, `action_msgs`, `tf2`
+- `rosidl_default_generators` (custom `srv` and `action` interfaces)
 - The TurtleBot3 simulation (`turtlebot3_gazebo`) with the city lab world, and `rviz2`
 
 ### Build
@@ -101,7 +168,7 @@ source install/setup.bash
 
 ### Run
 
-In one terminal, launch the simulation:
+Launch the simulation in one terminal:
 
 ```bash
 export TURTLEBOT3_MODEL=waffle
@@ -109,21 +176,29 @@ source ~/simulation_ws/install/setup.bash
 ros2 launch turtlebot3_gazebo main_turtlebot3_lab.launch.xml
 ```
 
-In a second terminal, start the patrol (this also opens RViz):
+Then, in another terminal sourced with `source ~/ros2_ws/install/setup.bash`:
 
 ```bash
-source ~/ros2_ws/install/setup.bash
+# Checkpoint 5: topics patrol
 ros2 launch robot_patrol start_patrolling.launch.py
-```
 
-The node exposes optional parameters for the scan and command topics and the loop period (`scan_topic`, `cmd_vel_topic`, `control_period_ms`), which made switching between the simulation and the real robot a matter of remapping rather than editing code.
+# Checkpoint 6, Task 1: test the service, then the service driven patrol
+ros2 launch robot_patrol start_direction_service.launch.py   # terminal A
+ros2 launch robot_patrol start_test_service.launch.py        # terminal B
+ros2 launch robot_patrol main.launch.py                      # service + patrol + RViz
+
+# Checkpoint 6, Task 2: the action server, then send a goal
+ros2 launch robot_patrol start_gotopose_action.launch.py
+ros2 action send_goal -f /go_to_pose robot_patrol/action/GoToPose "goal_pos: {x: 0.7, y: 0.3, theta: 0.0}"
+```
 
 ---
 
 ## Tech stack
 
-- **Language:** C++ 17 (single `Patrol` node, sensing and actuation split across two callbacks)
-- **Middleware:** ROS 2 Humble (subscription with `SensorDataQoS`, publisher, wall timer, callback groups, multi threaded executor)
+- **Language:** C++ 17
+- **Middleware:** ROS 2 Humble (topics, services, actions, custom `rosidl` interfaces, callback groups, multi threaded executors)
+- **Libraries:** `rclcpp`, `rclcpp_action`, `tf2` (quaternion to Euler)
 - **Simulation:** Gazebo Classic 11, TurtleBot3 (waffle) in The Construct city lab world
 - **Visualization:** RViz2 with a saved config in the `odom` frame
 - **Build:** colcon, ament_cmake
@@ -133,12 +208,12 @@ The node exposes optional parameters for the scan and command topics and the loo
 
 ## What I learned
 
-This was my first full ROS 2 C++ node, and moving over from ROS 1 Noetic taught me most of the lessons here:
+Working through these two checkpoints took me from a single reactive node to the three core ROS 2 communication patterns, and each step had its own lesson:
 
-- **Separating sensing from acting makes the node predictable.** Keeping the laser callback as the only reader of the scan and the timer callback as the only writer of `/cmd_vel` meant the control rate stayed a clean 10 Hz no matter how the scan arrived. Putting each in its own callback group under a multi threaded executor is what makes that separation actually concurrent rather than just tidy on paper.
-- **QoS is not optional in ROS 2.** The laser scan would not show up until I subscribed with `SensorDataQoS` (best effort) to match the publisher. That mismatch is invisible in ROS 1 and was my first real ROS 2 gotcha.
-- **`inf` is a real value in a laser scan.** The "safest direction" is only meaningful if you skip the `inf` and `NaN` returns before taking the maximum, and then clamp the resulting angle to the front half plane. Getting that filtering right was the difference between smooth turns and the robot lunging at gaps behind it.
-- **A reactive rule can go a surprisingly long way.** There is no map and no planner here, just "steer toward the most open ray in front," yet it completes clean laps of the arena in both directions. It also made the limits obvious, which is exactly what the next checkpoint sets out to improve.
+- **Services turn a decision into a contract.** Moving the "which way do I turn" logic out of the patrol loop and behind `/direction_service` meant the patrol node no longer cared how the decision was made, only what came back. Designing the `GetDirection` interface first, then the server, then the client, made the boundary obvious and easy to test in isolation with the small `test_service` node.
+- **Async service calls need back pressure.** Calling the service on every laser scan flooded it until I added a single in flight flag and only sent the next request after the previous reply arrived. Keeping the timer as the only publisher to `/cmd_vel` kept the command rate steady even while requests came and went.
+- **Actions are the right tool for goals that take time.** The GoToPose server accepts a goal, streams feedback while it works, and reports a result at the end, which is a much better fit than a service for "drive over there." Running the goal on a detached thread and checking for cancellation each cycle is what keeps the server responsive to new goals.
+- **Odometry is quaternions, control is angles.** The action controller only became stable once I converted the odometry quaternion to yaw with `tf2` and wrapped every angle error to `[-pi, pi]`. Splitting the motion into a drive phase and a final align phase kept the proportional control simple and the final pose within a few centimeters and a few degrees.
 
 ---
 
